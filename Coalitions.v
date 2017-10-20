@@ -5,52 +5,250 @@ Import Coq.Program.Basics.
 
 Set Implicit Arguments.
 
-Inductive BDD :=
-| Zero : BDD
-| One : BDD
-(* label ; id ; t ; e *)
-| Node : nat -> nat -> BDD -> BDD -> BDD
-| Ref : nat -> BDD.
+Section Pair.
 
+  Definition mapFirst A B C (f : A -> B) (p : A * C) :=
+    pair (f (fst p)) (snd p).
 
-Definition mapFirst A B C (f : A -> B) (p : A * C) :=
-  pair (f (fst p)) (snd p).
+  Definition mapSecond A B C (f : A -> B) (p : C * A) :=
+    pair (fst p) (f (snd p)).
 
-Definition mapSecond A B C (f : A -> B) (p : C * A) :=
-  pair (fst p) (f (snd p)).
+End Pair.
 
+Section BDD.
 
-Section Algebra.
+  Inductive BDD :=
+  | Zero : BDD
+  | One : BDD
+  | Node : nat -> nat -> BDD -> BDD -> BDD
+  | Ref : nat -> BDD.
+
+  Fixpoint foldBDD (A : Type) (zero one : A) (ref : nat -> A)
+           (node : nat -> A -> nat -> A -> A) (bdd : BDD) : A :=
+    match bdd with
+    | Zero => zero
+    | One  => one
+    | Ref i => ref i
+    | Node id var thenB elseB =>
+      node id (foldBDD zero one ref node thenB)
+           var (foldBDD zero one ref node elseB)
+    end.
+
+  Section Dict.
+
+    Variable K V : Type.
+    Definition Dict := K -> V.
+    Definition insertDict (eqK : K -> K -> bool)
+               (key : K) (val : V) (dict : Dict) : Dict :=
+      fun k' => if eqK key k'
+             then val
+             else dict k'.
+
+    Axiom ERROR : V.
+    Definition emptyDict : Dict := fun k => ERROR.
+
+  End Dict.
+
+  Definition foldBDDShareDict (A : Type) (zero one : A)
+           (node : A -> nat -> A -> A)
+    : BDD -> Dict nat A -> Dict nat A * A :=
+    let zeroS := fun dict => (dict, zero) in
+    let oneS  := fun dict => (dict, one) in
+    let refS  := fun i dict => (dict, dict i) in
+    let nodeS := fun id thenF var elseF dict =>
+        let '(dict1, res1) := thenF dict in
+        let '(dict2, res2) := elseF dict1 in
+        let res           := node res1 var res2
+        in (insertDict Nat.eqb id res dict2, res)
+    in foldBDD zeroS oneS refS nodeS.
+
+  Definition foldBDDShare (A : Type) (zero one : A) (node : A -> nat -> A -> A)
+             (bdd : BDD) : A :=
+    snd (foldBDDShareDict zero one node bdd (@emptyDict nat A)).
+
+  Definition all (bdd : BDD) : list (list nat * list nat) :=
+    let nodeAll pt v pe :=
+        map (mapFirst (fun xs => v :: xs)) pt
+            ++ map (mapSecond (fun xs => v :: xs)) pe
+    in foldBDDShare [] [([],[])] nodeAll bdd.
+
+End BDD.
+
+Section CommutativeSemiring.
+
+  Class CommutativeSemiring (A : Type) :=
+    { one : A;
+      zero : A;
+      plus : A -> A -> A;
+      mult : A -> A -> A;
+      plus_0_r : forall x, plus x zero = x;
+      plus_0_l : forall x, plus zero x = x;
+      plus_assoc : forall z1 z2 z3, plus z1 (plus z2 z3) = plus (plus z1 z2) z3;
+      mult_1_r : forall x, mult x one = x;
+      mult_1_l : forall x, mult zero x = x;
+      mult_0_r : forall x, mult x zero = zero;
+      mult_assoc : forall z1 z2 z3, mult z1 (mult z2 z3) = mult (mult z1 z2) z3;
+      mult_comm : forall x y, mult x y = mult y x;
+      mult_plus_distr : forall x y z, mult x (plus y z) = plus (mult x y) (mult x z)
+    }.
 
   Variable A : Type.
-  Variable one : A.
-  Variable zero : A.
-  Variable plus : A -> A -> A.
-  Variable mult : A -> A -> A.
+  Context {CA : CommutativeSemiring A}.
 
-  Variable mult_1_r : forall x, mult x one = x.
-  Variable mult_1_l : forall x, mult zero x = x.
-  Variable plus_0_r : forall x, plus x zero = x.
-  Variable plus_0_l : forall x, plus zero x = x.
-  Variable mult_0_r : forall x, mult x zero = zero.
-  Variable plus_assoc : forall z1 z2 z3, plus z1 (plus z2 z3) = plus (plus z1 z2) z3.
-  Variable mult_assoc : forall z1 z2 z3, mult z1 (mult z2 z3) = mult (mult z1 z2) z3.
-  Variable mult_comm : forall x y, mult x y = mult y x.
-  Variable mult_plus_distr : forall x y z, mult x (plus y z) = plus (mult x y) (mult x z).
-
-  Variable f : nat -> A.
-  Variable g : nat -> A.
-  
   Definition sum : list A -> A := fold_right plus zero.
 
   Definition prod : list A -> A := fold_right mult one.
 
-  Definition prods (pair : list nat * list nat) :=
-    mult (prod (map f (fst pair))) (prod (map g (snd pair))).
+  Lemma mult_prod_map :
+    forall B C (z : B) (h1 : B -> A) (zsc : list B * C),
+      mult (h1 z) (prod (map h1 (fst zsc))) = prod (map h1 (z :: fst zsc)).
+  Proof.
+      reflexivity.
+  Qed.
 
-  Definition h (xs : list (list nat * list nat)) : A := sum (map prods xs).
+End CommutativeSemiring.
 
-  Definition p (v : list (list nat * list nat)) (z : nat) (w : list (list nat * list nat)) :=
+Section HenningIndex.
+
+  Definition sumProdSpec (A : Type) `{CommutativeSemiring A}
+             (f g : nat -> A) (bdd : BDD) : A :=
+    let prods := fun '(win,comp) =>
+        mult (prod (map f win)) (prod (map g comp))
+    in sum (map prods (all bdd)).
+
+  Definition sumProd (A : Type) {CA : CommutativeSemiring A}
+             (f g : nat -> A) (bdd : BDD) : A :=
+    let nodeSumProd t v e := plus (mult (f v) t) (mult (g v) e)
+    in foldBDDShare zero one nodeSumProd bdd.
+
+Section Lemma1.
+
+  Variable A B : Type.
+  Variable h : A -> B.
+  Variable p : A -> nat -> A -> A.
+  Variable q : B -> nat -> B -> B.
+
+  Axiom free_theorem_foldBDDShare :
+    (forall (v : A) (n : nat) (w : A),
+        h (p v n w) = q (h v) n (h w)) ->
+    forall (x y : A) (bdd : BDD),
+      h (foldBDDShare x y p bdd) = foldBDDShare (h x) (h y) q bdd.
+
+End Lemma1.
+
+Section Lemma2.
+
+  Variable A : Type.
+  Context {CA : CommutativeSemiring A}.
+
+  Lemma sum_homomorphism :
+    forall (xs ys : list A),
+      sum (xs ++ ys) = plus (sum xs) (sum ys).
+  Proof.
+    induction xs; intro ys.
+    - unfold "++".
+      rewrite <- plus_0_l with (x := (sum ys)) at 1.
+      simpl.
+      reflexivity.
+    - simpl sum.
+      rewrite IHxs.
+      rewrite plus_assoc.
+      reflexivity.
+  Qed.
+
+End Lemma2.
+
+Section Lemma3.
+
+  Variable A : Type.
+  Context {CA : CommutativeSemiring A}.
+
+  Lemma mult_sum :
+    forall c l, mult c (sum l) = sum (map (mult c) l).
+  Proof.
+    intros c l.
+      induction l.
+    - simpl sum.
+      apply mult_0_r.
+    - simpl sum.
+      rewrite mult_plus_distr.
+      rewrite IHl.
+        reflexivity.
+  Qed.
+
+End Lemma3.
+
+Section prods.
+
+  Variable A : Type.
+  Context {CA : CommutativeSemiring A}.
+
+  Variable f : nat -> A.
+  Variable g : nat -> A.
+
+  Definition prods : list nat * list nat -> A :=
+    fun '(win,comp) => mult (prod (map f win)) (prod (map g comp)).
+
+End prods.
+
+Section Lemma4.
+
+  Variable A : Type.
+  Context {CA : CommutativeSemiring A}.
+
+  Variable f : nat -> A.
+  Variable g : nat -> A.
+
+  Lemma prods_cons1 :
+    forall l z,
+      prods f g (mapFirst (fun zs => z :: zs) l) = mult (f z) (prods f g l).
+  Proof.
+    intros l z.
+    unfold prods.
+    simpl.
+    destruct l.
+    rewrite mult_assoc.
+    reflexivity.
+  Qed.
+
+End Lemma4.
+
+Section Lemma5.
+
+  Variable A : Type.
+  Context {CA : CommutativeSemiring A}.
+
+  Variable f : nat -> A.
+  Variable g : nat -> A.
+
+  Lemma prods_cons2 :
+    forall l z,
+      prods f g (mapSecond (fun zs => z :: zs) l) = mult (g z) (prods f g l).
+  Proof.
+    intros l z.
+    unfold prods.
+    destruct l.
+    simpl.
+    rewrite mult_assoc, mult_comm with (x := prod (map f l)), <- mult_assoc.
+    reflexivity.
+  Qed.
+
+End Lemma5.
+
+Section Theorem1.
+
+  Variable A : Type.
+  Context {CA : CommutativeSemiring A}.
+
+  Variable f : nat -> A.
+  Variable g : nat -> A.
+
+  Definition prods' := prods f g.
+
+  Definition h (xs : list (list nat * list nat)) : A := sum (map prods' xs).
+
+  Definition p (v : list (list nat * list nat))
+             (z : nat) (w : list (list nat * list nat)) :=
     map (mapFirst (fun zs => z :: zs)) v
         ++ map (mapSecond (fun zs => z :: zs)) w.
 
@@ -61,7 +259,7 @@ Section Algebra.
   Definition y : list (list nat * list nat) := [([],[])].
 
   Section Proof_Obligations.
-    
+
     Lemma h_x_zero :
       h x = zero.
     Proof.
@@ -73,91 +271,9 @@ Section Algebra.
       h y = one.
     Proof.
       unfold h, y; simpl.
-      unfold prods; simpl.
+      unfold prods', prods; simpl.
       rewrite mult_1_r.
       apply plus_0_r.
-    Qed.
-
- 
-    Lemma sum_homomorphism :
-      forall (xs ys : list A),
-        sum (xs ++ ys) = plus (sum xs) (sum ys).
-    Proof.
-      intros xs ys.
-      revert ys.
-      induction xs; intro ys.
-      - unfold "++".
-        rewrite <- plus_0_l with (x := (sum ys)) at 1.
-        simpl.
-        reflexivity.
-      - simpl sum.
-        rewrite IHxs.
-        rewrite plus_assoc.
-        reflexivity.
-    Qed.
-
-    (* Lemma prod_map_append : *)
-    (*   forall B (xs ys : list B) (h1 h2 : B -> A), *)
-    (*     (forall z1 z2 z3, mult z1 (mult z2 z3) = mult (mult z1 z2) z3) -> *)
-    (*     prod (map h1 xs ++ map h2 ys) = mult (prod (map h1 xs)) (prod (map h2 ys)). *)
-    (* Proof. *)
-    (*   intros B xs ys h1 h2 mult_assoc. *)
-    (*   revert ys. *)
-    (*   induction xs; intro ys; destruct ys; simpl. *)
-    (*   - rewrite one_rn_mult. *)
-    (*     reflexivity. *)
-    (*   - rewrite zero_ln_plus. *)
-    (*     reflexivity. *)
-    (*   - rewrite app_nil_r. *)
-    (*     rewrite zero_rn_plus. *)
-    (*     reflexivity. *)
-    (*   - specialize (IHxs (b :: ys)). *)
-    (*     simpl in *. *)
-    (*     rewrite IHxs. *)
-    (*     rewrite plus_assoc. *)
-    (*     reflexivity. *)
-    (* Qed. *)
-
-    Lemma mult_prod_map :
-      forall B C (z : B) (h1 : B -> A) (zsc : list B * C),
-        mult (h1 z) (prod (map h1 (fst zsc))) = prod (map h1 (z :: fst zsc)).
-    Proof.
-      reflexivity.
-    Qed.
-
-    Lemma mult_sum :
-      forall c l, mult c (sum l) = sum (map (mult c) l).
-    Proof.
-      intros c l.
-      induction l.
-      - simpl sum.
-        apply mult_0_r.
-      - simpl sum.
-        rewrite mult_plus_distr.
-        rewrite IHl.
-        reflexivity.
-    Qed.
-
-    Lemma prods_cons1 :
-      forall l z,
-        prods (mapFirst (fun zs => z :: zs) l) = mult (f z) (prods l).
-    Proof.
-      intros l z.
-      unfold prods.
-      simpl.
-      rewrite mult_assoc.
-      reflexivity.
-    Qed.
-
-    Lemma prods_cons2 :
-      forall l z,
-        prods (mapSecond (fun zs => z :: zs) l) = mult (g z) (prods l).
-    Proof.
-      intros l z.
-      unfold prods.
-      simpl.
-      rewrite mult_assoc, mult_comm with (x := prod (map f (fst l))), <- mult_assoc.
-      reflexivity.
     Qed.
 
     Lemma h_p_q_paper_version :
@@ -170,14 +286,14 @@ Section Algebra.
       rewrite map_app.
       do 2 rewrite map_map.
       rewrite sum_homomorphism.
-      
-      replace (fun x0 : list nat * list nat => prods (mapFirst (fun zs => n :: zs) x0))
-      with (fun x0 : list nat * list nat => mult (f n) (prods x0));
-        try (extensionality xys; rewrite prods_cons1; reflexivity).
 
-      replace (fun x0 : list nat * list nat => prods (mapSecond (fun zs => n :: zs) x0))
-      with (fun x0 : list nat * list nat => mult (g n) (prods x0));
-        try (extensionality xys; rewrite prods_cons2; reflexivity).
+      replace (fun x0 : list nat * list nat => prods' (mapFirst (fun zs => n :: zs) x0))
+      with (fun x0 : list nat * list nat => mult (f n) (prods' x0));
+        try (extensionality xys; unfold prods'; rewrite prods_cons1; reflexivity).
+
+      replace (fun x0 : list nat * list nat => prods' (mapSecond (fun zs => n :: zs) x0))
+      with (fun x0 : list nat * list nat => mult (g n) (prods' x0));
+        try (extensionality xys; unfold prods'; rewrite prods_cons2; reflexivity).
 
       rewrite <- map_map.
       rewrite <- mult_sum.
@@ -204,19 +320,50 @@ Section Algebra.
       unfold h.
       do 2 rewrite mult_sum.
       do 2 rewrite map_map.
-      unfold prods.
+      unfold prods', prods.
       simpl fst; simpl snd; simpl prod.
 
       do 3 f_equal.
       - extensionality pair.
+        simpl.
+        destruct pair.
         rewrite <- mult_assoc.
         reflexivity.
       - extensionality pair.
+        simpl.
+        destruct pair.
         rewrite mult_assoc.
-        rewrite mult_comm with (x := prod (map f (fst pair))).
+        rewrite mult_comm with (x := prod (map f l)).
         rewrite <- mult_assoc.
         reflexivity.
     Qed.
 
   End Proof_Obligations.
-End Algebra.
+
+  Theorem sumProd_sumProdSpec :
+    forall bdd,
+      sumProd f g bdd = sumProdSpec f g bdd.
+    intro bdd.
+    unfold sumProdSpec.
+    unfold all.
+    fold p.
+    fold y.
+    fold x.
+    rewrite free_theorem_foldBDDShare
+    with (h := fun xs => sum (map (fun '(win, comp) =>
+                           mult (prod (map f win)) (prod (map g comp))) xs))
+           (x := [])
+           (y := [([],[])])
+           (p := fun pt v pe => map (mapFirst (fun xs => v :: xs)) pt
+                                 ++ map (mapSecond (fun xs => v :: xs)) pe)
+           (q := fun pt v pe => plus (mult (f v) pt) (mult (g v) pe));
+      try apply h_p_q.
+    pose proof h_x_zero as Hzero.
+    pose proof h_y_one as Hone.
+    unfold h, prods', prods, x, y in *.
+    rewrite Hzero.
+    rewrite Hone.
+    reflexivity.
+  Qed.
+
+End Theorem1.
