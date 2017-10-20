@@ -85,11 +85,13 @@ Section CommutativeSemiring.
       plus_0_l : forall x, plus zero x = x;
       plus_assoc : forall z1 z2 z3, plus z1 (plus z2 z3) = plus (plus z1 z2) z3;
       mult_1_r : forall x, mult x one = x;
-      mult_1_l : forall x, mult zero x = x;
+      mult_1_l : forall x, mult one x = x;
+      mult_0_l : forall x, mult zero x = zero;
       mult_0_r : forall x, mult x zero = zero;
       mult_assoc : forall z1 z2 z3, mult z1 (mult z2 z3) = mult (mult z1 z2) z3;
       mult_comm : forall x y, mult x y = mult y x;
-      mult_plus_distr : forall x y z, mult x (plus y z) = plus (mult x y) (mult x z)
+      mult_plus_distr_r : forall x y z, mult x (plus y z) = plus (mult x y) (mult x z);
+      mult_plus_distr_l : forall x y z, mult (plus x y) z = plus (mult x z) (mult y z)
     }.
 
   Variable A : Type.
@@ -171,9 +173,9 @@ Section Lemma3.
     - simpl sum.
       apply mult_0_r.
     - simpl sum.
-      rewrite mult_plus_distr.
+      rewrite mult_plus_distr_r.
       rewrite IHl.
-        reflexivity.
+      reflexivity.
   Qed.
 
 End Lemma3.
