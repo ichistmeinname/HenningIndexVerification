@@ -2,6 +2,7 @@ Require Import List.
 Require Import FunctionalExtensionality.
 Import ListNotations.
 Import Coq.Program.Basics.
+Require Import Coq.QArith.Qcanon.
 
 Set Implicit Arguments.
 
@@ -122,6 +123,32 @@ Section HenningIndex.
              (f g : nat -> A) (bdd : BDD) : A :=
     let nodeSumProd t v e := plus (mult (f v) t) (mult (g v) e)
     in foldBDDShare zero one nodeSumProd bdd.
+
+  Instance Qc_CSR : CommutativeSemiring Qc :=
+    { one := 1;
+      zero := 0;
+      plus := Qcplus;
+      mult := Qcmult;
+      plus_0_r := Qcplus_0_r;
+      plus_0_l := Qcplus_0_l;
+      plus_assoc := Qcplus_assoc;
+      mult_1_r := Qcmult_1_r;
+      mult_1_l := Qcmult_1_l;
+      mult_0_l := Qcmult_0_l;
+      mult_0_r := Qcmult_0_r;
+      mult_assoc := Qcmult_assoc;
+      mult_comm := Qcmult_comm;
+      mult_plus_distr_r := Qcmult_plus_distr_r;
+      mult_plus_distr_l := Qcmult_plus_distr_l
+    }.
+
+  Definition henningIndex (p : nat -> Qc) (bdd : BDD) : Qc :=
+    sumProd p (fun i => 1 - p i) bdd.
+
+  Definition henningIndexSpec (p : nat -> Qc) (bdd : BDD) : Qc :=
+    sumProdSpec p (fun i => 1 - p i) bdd.
+
+End HenningIndex.
 
 Section Lemma1.
 
@@ -345,27 +372,26 @@ Section Theorem1.
   Theorem sumProd_sumProdSpec :
     forall bdd,
       sumProd f g bdd = sumProdSpec f g bdd.
+  Proof.
     intro bdd.
-    unfold sumProdSpec.
-    unfold all.
-    fold p.
-    fold y.
-    fold x.
-    rewrite free_theorem_foldBDDShare
-    with (h := fun xs => sum (map (fun '(win, comp) =>
-                           mult (prod (map f win)) (prod (map g comp))) xs))
-           (x := [])
-           (y := [([],[])])
-           (p := fun pt v pe => map (mapFirst (fun xs => v :: xs)) pt
-                                 ++ map (mapSecond (fun xs => v :: xs)) pe)
-           (q := fun pt v pe => plus (mult (f v) pt) (mult (g v) pe));
-      try apply h_p_q.
-    pose proof h_x_zero as Hzero.
-    pose proof h_y_one as Hone.
-    unfold h, prods', prods, x, y in *.
-    rewrite Hzero.
-    rewrite Hone.
+    pose proof (free_theorem_foldBDDShare h p q h_p_q x y).
+    rewrite h_x_zero in H.
+    rewrite h_y_one in H.
+    unfold sumProd.
+    rewrite <- H.
     reflexivity.
   Qed.
 
 End Theorem1.
+
+Section Corollary1.
+
+  Corollary henningIndex_henningIndexSpec :
+    forall (p : nat -> Qc) bdd, henningIndex p bdd = henningIndexSpec p bdd.
+  Proof.
+    intros p bdd.
+    unfold henningIndex, henningIndexSpec.
+    apply sumProd_sumProdSpec.
+  Qed.
+
+End Corollary1.
